@@ -1,5 +1,6 @@
 ﻿
 #include "Terminal.hpp"
+#include "AudioManager.hpp"
 #include "cxxopts.hpp"
 
 #include <chrono>
@@ -7,6 +8,8 @@
 #include <thread>
 
 using namespace std;
+
+const auto assetDir = tetro::executable_directory() / "assets";
 
 const double lock_delay = 0.0;
 bool wallkick_flag = true;
@@ -24,6 +27,7 @@ bool isNumber(string& param) {
 int main(int argc, char** argv) {
 
 	tetro::TerminalConfig tcfg;
+	tetro::AudioManager audio;
 
 	try {
 		cxxopts::Options options("Tetro", "A lightweight Tetris-like terminal game.");
@@ -63,6 +67,9 @@ int main(int argc, char** argv) {
 	tetro::Game game;
 	tetro::Terminal terminal(tcfg);
 
+	//audio.add_audio("theme", (assetDir / "tetris_theme.mp3").string());
+	//audio.start_bgm("theme", 0.2f, true);
+
 	auto previous = clock::now();
 	while (game.running()) {
 		const auto now = clock::now();
@@ -78,7 +85,8 @@ int main(int argc, char** argv) {
 		this_thread::sleep_for(chrono::milliseconds(1));
 	}
 
-	terminal.restore();
+	//audio.stop_bgm("theme");
+	terminal.restore(true);
 
 	return 0;
 }

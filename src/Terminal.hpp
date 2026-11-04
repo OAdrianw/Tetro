@@ -4,15 +4,32 @@
 
 #include <chrono>
 #include <iostream>
+#include <vector>
 #include <string>
 
 #if defined(_WIN32) || defined(_WIN64)
 #define WIN32_LEAN_AND_MEAN
 	#include <conio.h>
 	#include <windows.h>
+	#include <filesystem>
 #endif
 
 namespace tetro {
+
+	inline std::filesystem::path executable_directory() {
+		std::wstring buffer(32768, L'\0');
+
+		DWORD length = GetModuleFileNameW(
+			nullptr,
+			buffer.data(),
+			static_cast<DWORD>(buffer.size())
+		);
+
+		if (length == 0 || length >= buffer.size()) throw std::runtime_error("Failed to locate executable.");
+
+		buffer.resize(length);
+		return std::filesystem::path(buffer).parent_path();
+	}
 
 	struct DasKeyState {
 
@@ -67,7 +84,7 @@ namespace tetro {
 
 		Terminal(TerminalConfig cfg) { initialize(cfg); }
 		Terminal() { initialize(TERMINAL_CONFIG); }
-		~Terminal() { restore(); }
+		~Terminal() { restore(true); }
 
 		Terminal(const Terminal&) = delete;
 		Terminal& operator=(const Terminal&) = delete;
@@ -129,7 +146,8 @@ namespace tetro {
 #endif
 			initialized_ = true;
 		}
-		void restore(){
+		
+		void restore(bool prefill_command){
 			
 			if (!initialized_) return;
 
@@ -140,8 +158,7 @@ namespace tetro {
 					FALSE,
 					&old_font_info_
 				)) {
-					std::cerr << "Font restoration failed: "
-						<< GetLastError() << '\n';
+					std::cerr << "Font restoration failed: " << GetLastError() << '\n';
 				}
 			}
 
@@ -151,6 +168,13 @@ namespace tetro {
 
 			if (have_output_mode_) SetConsoleMode(stdout_, old_output_mode_);
 			if (have_input_mode_) SetConsoleMode(input_, old_input_mode_);
+
+			if (input_ != INVALID_HANDLE_VALUE) {
+
+				if (!FlushConsoleInputBuffer(input_)) std::cerr << "Failed to flush console input: " << GetLastError() << '\n';
+				else if (prefill_command) type_command(L"tetro");
+			}
+
 			if (output_ != INVALID_HANDLE_VALUE) {
 				CloseHandle(output_);
 				output_ = INVALID_HANDLE_VALUE;
@@ -158,6 +182,49 @@ namespace tetro {
 #endif
 
 			initialized_ = false;
+		}
+
+		void type_command(const std::wstring& command) {
+#if defined(_WIN32)
+			std::vector<INPUT_RECORD> events;
+			events.reserve(command.size() * 2);
+
+			for (wchar_t ch : command) {
+				SHORT mapped = VkKeyScanW(ch);
+				if (mapped == -1) continue;
+
+				WORD vk = LOBYTE(mapped);
+
+				KEY_EVENT_RECORD key{};
+				key.bKeyDown = TRUE;
+				key.wRepeatCount = 1;
+				key.wVirtualKeyCode = vk;
+				key.wVirtualScanCode = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+				key.uChar.UnicodeChar = ch;
+
+				INPUT_RECORD event{};
+				event.EventType = KEY_EVENT;
+				event.Event.KeyEvent = key;
+
+				events.push_back(event);
+				
+				key.bKeyDown = FALSE;
+				event.Event.KeyEvent = key;
+
+
+				events.push_back(event);
+			}
+
+			DWORD written = 0;
+
+			if (!events.empty()) {
+				if (!WriteConsoleInputW(input_, events.data(), static_cast<DWORD>(events.size()), &written) ||
+					written != events.size()) {
+					std::cerr << "Failed to insert restart command: " << GetLastError() << '\n';
+				}
+			}
+
+#endif
 		}
 
 		bool poll_action(Action& action, double dt) {
@@ -168,7 +235,7 @@ namespace tetro {
 			if (rotate_key_.update(VK_UP, dt, .1, .15)) { action = Action::Rotate; return true; }
 			if (drop_key_.update(VK_DOWN, dt, .1, .05)) { action = Action::SoftDrop; return true; }
 			if (harddrop_key_.update(VK_SPACE, dt, .3, .3)) { action = Action::HardDrop; return true; }
-			if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) { action = Action::Quit; return true; }
+			if (GetAsyncKeyState(VK_ESCAPE) & 0x8000 || GetAsyncKeyState('Q') & 0x8000) { action = Action::Quit; return true; }
 #endif
 			return false;
 		}
